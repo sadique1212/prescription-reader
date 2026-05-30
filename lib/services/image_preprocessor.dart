@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:math' as math;
-import 'dart:ui';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 
 class PreprocessResult {
@@ -314,13 +314,14 @@ class _DecodedImage {
   _DecodedImage(this.pixels, this.width, this.height);
 }
 
+
 Future<_DecodedImage?> _decodeImage(Uint8List bytes) async {
   try {
-    // Use dart:ui to decode — this is the most reliable Flutter-native decoder
-    // and handles JPEG, PNG, HEIC, WebP from camera/gallery correctly.
-    final codec = await decodeImageFromList(bytes);
+    final codec = await ui.instantiateImageCodec(bytes);
     final frame = await codec.getNextFrame();
-    final byteData = await frame.image.toByteData();
+    final byteData = await frame.image.toByteData(
+      format: ui.ImageByteFormat.rawRgba,
+    );
     if (byteData == null) return null;
     return _DecodedImage(
       byteData.buffer.asUint8List(),
