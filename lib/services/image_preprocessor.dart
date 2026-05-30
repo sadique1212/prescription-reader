@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:math' as math;
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
 
 class PreprocessResult {
