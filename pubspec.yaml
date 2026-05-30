@@ -30,10 +30,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
   image_picker: ^1.1.2
   google_mlkit_text_recognition: ^0.13.0
-
+  image_cropper: ^8.0.1        # NEW — drag-corner crop UI
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
