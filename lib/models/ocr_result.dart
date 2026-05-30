@@ -1,3 +1,7 @@
+// lib/models/ocr_result.dart  (UPDATED — replaces your existing file)
+
+import 'prescription_result.dart';
+
 class OcrBlock {
   final String text;
   final double confidence;
@@ -22,9 +26,13 @@ class OcrBlock {
 class OcrResult {
   final String rawText;
   final List<OcrBlock> blocks;
-  final double imageQualityScore; // 0.0 to 1.0
+  final double imageQualityScore;
   final int processingMs;
-  final String? warningMessage; // shown to user if quality is low
+  final String? warningMessage;
+
+  // Layer 2 output
+  final PrescriptionResult? prescriptionResult;
+  final String? aiError;
 
   OcrResult({
     required this.rawText,
@@ -32,7 +40,11 @@ class OcrResult {
     required this.imageQualityScore,
     required this.processingMs,
     this.warningMessage,
+    this.prescriptionResult,
+    this.aiError,
   });
 
-  bool get isUsable => imageQualityScore > 0.3 && rawText.trim().isNotEmpty;
+  bool get isUsable =>
+      imageQualityScore > 0.3 && rawText.trim().isNotEmpty;
+  bool get hasAiResult => prescriptionResult != null;
 }

@@ -1,18 +1,29 @@
+// lib/services/ocr_service.dart  (UPDATED — replaces your existing file)
+// Integrates Layer 1 (ML Kit OCR + preprocessing) with Layer 2 (AI interpretation)
+
 import 'dart:io';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import '../models/ocr_result.dart';
+import '../models/prescription_result.dart';
 import 'image_preprocessor.dart';
+import 'ai_interpretation_service.dart';
 
 class OcrService {
-  final _latinRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-  final _devanagariRecognizer = TextRecognizer(script: TextRecognitionScript.devanagiri);
+  final _latinRecognizer =
+  TextRecognizer(script: TextRecognitionScript.latin);
+  final _devanagariRecognizer =
+  TextRecognizer(script: TextRecognitionScript.devanagiri);
+  final _aiService = AiInterpretationService();
 
+  /// Full pipeline: Layer 1 → raw OCR → Layer 2 → structured result.
   Future<OcrResult> processImage(File rawImageFile) async {
     final stopwatch = Stopwatch()..start();
 
+    // ── LAYER 1: Image preprocessing ────────────────────────────────────
     final preprocessed = await ImagePreprocessor.process(rawImageFile);
     final inputImage = InputImage.fromFile(preprocessed.processedFile);
 
+    // ── LAYER 1: Multi-script OCR ────────────────────────────────────────
     final results = await Future.wait([
       _latinRecognizer.processImage(inputImage),
       _devanagariRecognizer.processImage(inputImage),
@@ -47,6 +58,7 @@ class OcrService {
       }
     }
 
+    // Sort blocks: top-to-bottom, then left-to-right
     allBlocks.sort((a, b) {
       final rowDiff = a.top - b.top;
       if (rowDiff.abs() > 20) return rowDiff;
@@ -55,9 +67,20 @@ class OcrService {
 
     final rawText = allBlocks.map((b) => b.text).join('\n');
 
+    // ── LAYER 2: AI interpretation ───────────────────────────────────────
+    PrescriptionResult? prescriptionResult;
+    String? aiError;
+    try {
+      prescriptionResult = await _aiService.interpret(rawText);
+    } catch (e) {
+      aiError = e.toString();
+    }
+
     stopwatch.stop();
 
-    try { await preprocessed.processedFile.delete(); } catch (_) {}
+    try {
+      await preprocessed.processedFile.delete();
+    } catch (_) {}
 
     return OcrResult(
       rawText: rawText,
@@ -65,6 +88,8 @@ class OcrService {
       imageQualityScore: preprocessed.qualityScore,
       processingMs: stopwatch.elapsedMilliseconds,
       warningMessage: preprocessed.warning,
+      prescriptionResult: prescriptionResult,
+      aiError: aiError,
     );
   }
 
