@@ -51,7 +51,7 @@ class OcrService {
       // Try latin only as fallback
       try {
         latinResult = await _latinRecognizer.processImage(inputImage);
-        devanagariResult = RecognizedText('', []);
+        devanagariResult = RecognizedText(text: '', blocks: []);
       } catch (e2) {
         stopwatch.stop();
         return OcrResult(

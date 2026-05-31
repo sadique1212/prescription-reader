@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../models/prescription_result.dart';
 import 'medicine_database.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/foundation.dart';
 
 class AiInterpretationService {
   static String get _apiKey =>
