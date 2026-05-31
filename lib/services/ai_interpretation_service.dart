@@ -12,7 +12,7 @@ class AiInterpretationService {
   static String get _apiKey =>
       dotenv.env['GEMINI_API_KEY'] ?? '';
   static const String _apiUrl =
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
   Future<PrescriptionResult> interpret(String rawOcrText) async {
     final preprocessed = _preprocess(rawOcrText);

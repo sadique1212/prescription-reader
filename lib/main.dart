@@ -6,10 +6,14 @@ import 'package:image_cropper/image_cropper.dart';
 import 'services/ocr_service.dart';
 import 'models/ocr_result.dart';
 import 'models/prescription_result.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: '.env');
   runApp(const PrescriptionApp());
 }
+
 
 class PrescriptionApp extends StatelessWidget {
   const PrescriptionApp({super.key});
