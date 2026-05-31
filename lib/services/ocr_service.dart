@@ -1,7 +1,8 @@
-// lib/services/ocr_service.dart  (UPDATED — replaces your existing file)
-// Integrates Layer 1 (ML Kit OCR + preprocessing) with Layer 2 (AI interpretation)
+// lib/services/ocr_service.dart
+// Fixed: correct TextRecognitionScript enum, better error handling
 
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import '../models/ocr_result.dart';
 import '../models/prescription_result.dart';
@@ -15,23 +16,55 @@ class OcrService {
   TextRecognizer(script: TextRecognitionScript.devanagiri);
   final _aiService = AiInterpretationService();
 
-  /// Full pipeline: Layer 1 → raw OCR → Layer 2 → structured result.
+  /// Full pipeline: preprocess → OCR → AI interpretation
   Future<OcrResult> processImage(File rawImageFile) async {
     final stopwatch = Stopwatch()..start();
 
-    // ── LAYER 1: Image preprocessing ────────────────────────────────────
-    final preprocessed = await ImagePreprocessor.process(rawImageFile);
+    // ── Layer 1a: Image preprocessing ────────────────────────────────
+    PreprocessResult preprocessed;
+    try {
+      preprocessed = await ImagePreprocessor.process(rawImageFile);
+    } catch (e) {
+      debugPrint('Preprocessing failed, using original: $e');
+      preprocessed = PreprocessResult(
+        processedFile: rawImageFile,
+        qualityScore: 0.5,
+        warning: 'Image preprocessing failed. Results may be less accurate.',
+      );
+    }
+
+    // ── Layer 1b: Multi-script OCR ────────────────────────────────────
     final inputImage = InputImage.fromFile(preprocessed.processedFile);
 
-    // ── LAYER 1: Multi-script OCR ────────────────────────────────────────
-    final results = await Future.wait([
-      _latinRecognizer.processImage(inputImage),
-      _devanagariRecognizer.processImage(inputImage),
-    ]);
+    RecognizedText latinResult;
+    RecognizedText devanagariResult;
 
-    final latinResult = results[0] as RecognizedText;
-    final devanagariResult = results[1] as RecognizedText;
+    try {
+      final results = await Future.wait([
+        _latinRecognizer.processImage(inputImage),
+        _devanagariRecognizer.processImage(inputImage),
+      ]);
+      latinResult = results[0] as RecognizedText;
+      devanagariResult = results[1] as RecognizedText;
+    } catch (e) {
+      debugPrint('OCR failed: $e');
+      // Try latin only as fallback
+      try {
+        latinResult = await _latinRecognizer.processImage(inputImage);
+        devanagariResult = RecognizedText('', []);
+      } catch (e2) {
+        stopwatch.stop();
+        return OcrResult(
+          rawText: '',
+          blocks: [],
+          imageQualityScore: preprocessed.qualityScore,
+          processingMs: stopwatch.elapsedMilliseconds,
+          warningMessage: 'OCR failed: $e2',
+        );
+      }
+    }
 
+    // ── Merge blocks ──────────────────────────────────────────────────
     final allBlocks = <OcrBlock>[];
 
     for (final block in latinResult.blocks) {
@@ -58,7 +91,7 @@ class OcrService {
       }
     }
 
-    // Sort blocks: top-to-bottom, then left-to-right
+    // Sort top-to-bottom, left-to-right
     allBlocks.sort((a, b) {
       final rowDiff = a.top - b.top;
       if (rowDiff.abs() > 20) return rowDiff;
@@ -67,19 +100,28 @@ class OcrService {
 
     final rawText = allBlocks.map((b) => b.text).join('\n');
 
-    // ── LAYER 2: AI interpretation ───────────────────────────────────────
+    // ── Layer 2: AI interpretation ────────────────────────────────────
     PrescriptionResult? prescriptionResult;
     String? aiError;
-    try {
-      prescriptionResult = await _aiService.interpret(rawText);
-    } catch (e) {
-      aiError = e.toString();
+
+    if (rawText.trim().isNotEmpty) {
+      try {
+        prescriptionResult = await _aiService.interpret(rawText);
+      } catch (e) {
+        aiError = e.toString();
+        debugPrint('AI interpretation error: $e');
+      }
+    } else {
+      aiError = 'No text detected in image';
     }
 
     stopwatch.stop();
 
+    // Clean up temp file
     try {
-      await preprocessed.processedFile.delete();
+      if (preprocessed.processedFile.path != rawImageFile.path) {
+        await preprocessed.processedFile.delete();
+      }
     } catch (_) {}
 
     return OcrResult(

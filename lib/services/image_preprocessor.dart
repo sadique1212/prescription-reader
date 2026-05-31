@@ -1,3 +1,7 @@
+// lib/services/image_preprocessor.dart
+// FIXED: dart:ui decode runs on main isolate first,
+// then heavy CPU work (CLAHE + Sauvola) runs in compute() isolate.
+
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:math' as math;
@@ -6,7 +10,7 @@ import 'package:flutter/foundation.dart';
 
 class PreprocessResult {
   final File processedFile;
-  final double qualityScore; // 0.0 = unusable, 1.0 = perfect
+  final double qualityScore;
   final String? warning;
 
   PreprocessResult({
@@ -16,91 +20,128 @@ class PreprocessResult {
   });
 }
 
+// Data passed into the compute() isolate — plain Dart types only, no dart:ui
+class _IsolatePayload {
+  final Uint8List pixels;
+  final int width;
+  final int height;
+  final String outputPath;
+
+  _IsolatePayload({
+    required this.pixels,
+    required this.width,
+    required this.height,
+    required this.outputPath,
+  });
+}
+
+class _IsolateResult {
+  final double qualityScore;
+  final String? warning;
+
+  _IsolateResult({required this.qualityScore, this.warning});
+}
+
 class ImagePreprocessor {
-  /// Full preprocessing pipeline for a raw prescription photo.
-  /// Returns a new File with the enhanced image written to the temp directory.
+  /// Full pipeline. dart:ui decode happens here (main isolate),
+  /// then heavy CPU work is offloaded via compute().
   static Future<PreprocessResult> process(File inputFile) async {
-    // Run heavy work off the main thread
-    return compute(_processingIsolate, inputFile.path);
-  }
+    final bytes = await inputFile.readAsBytes();
 
-  static Future<PreprocessResult> _processingIsolate(String inputPath) async {
-    final file = File(inputPath);
-    final bytes = await file.readAsBytes();
-
-    // Step 1: Decode image to raw RGBA pixels using Flutter's codec
+    // ── Step 1: Decode image on main isolate (dart:ui is available here) ──
     final decoded = await _decodeImage(bytes);
     if (decoded == null) {
       return PreprocessResult(
-        processedFile: file,
-        qualityScore: 0.0,
-        warning: 'Could not read image file.',
+        processedFile: inputFile,
+        qualityScore: 0.3,
+        warning: 'Could not decode image. Using original.',
       );
     }
 
-    final int width = decoded.width;
-    final int height = decoded.height;
-    final pixels = decoded.pixels; // Uint8List of RGBA bytes
-
-    // Step 2: Quality check BEFORE processing (gives meaningful feedback)
-    final blurScore = _computeBlurScore(pixels, width, height);
-    final brightnessScore = _computeBrightnessScore(pixels, width, height);
-    final qualityScore = (blurScore * 0.6 + brightnessScore * 0.4).clamp(0.0, 1.0);
-
-    String? warning;
-    if (blurScore < 0.3) {
-      warning = 'Image appears blurry. Hold the camera steady and retake.';
-    } else if (brightnessScore < 0.25) {
-      warning = 'Image is too dark. Move to better light and retake.';
-    } else if (brightnessScore > 0.92) {
-      warning = 'Image is overexposed. Avoid direct flash on white paper.';
-    }
-
-    // Step 3: Convert to grayscale
-    final gray = _toGrayscale(pixels, width, height);
-
-    // Step 4: CLAHE-style contrast enhancement (adaptive histogram equalisation)
-    // Especially important for rural prescriptions on low-quality paper
-    final enhanced = _adaptiveContrastEnhance(gray, width, height);
-
-    // Step 5: Adaptive thresholding (Sauvola method)
-    // Handles dark edges, watermarks, and uneven lighting better than Otsu
-    final thresholded = _adaptiveThreshold(enhanced, width, height);
-
-    // Step 6: Write processed image to temp file
+    // ── Step 2: Prepare output path ────────────────────────────────────
     final tempDir = Directory.systemTemp;
-    final outPath = '${tempDir.path}/rx_processed_${DateTime.now().millisecondsSinceEpoch}.png';
-    final outFile = File(outPath);
+    final outPath =
+        '${tempDir.path}/rx_${DateTime.now().millisecondsSinceEpoch}.bmp';
 
-    // Re-encode as RGBA PNG (ML Kit accepts this)
-    final rgbaOut = _grayscaleToRgba(thresholded, width, height);
-    await outFile.writeAsBytes(_encodePng(rgbaOut, width, height));
+    // ── Step 3: Offload CPU-heavy work to isolate ──────────────────────
+    final payload = _IsolatePayload(
+      pixels: decoded.pixels,
+      width: decoded.width,
+      height: decoded.height,
+      outputPath: outPath,
+    );
+
+    final result = await compute(_heavyProcessing, payload);
 
     return PreprocessResult(
-      processedFile: outFile,
-      qualityScore: qualityScore,
-      warning: warning,
+      processedFile: File(outPath),
+      qualityScore: result.qualityScore,
+      warning: result.warning,
     );
   }
 
-  // ─── Grayscale conversion ───────────────────────────────────────────────
+  // ── Runs in compute() isolate — NO dart:ui allowed here ───────────────
+  static Future<_IsolateResult> _heavyProcessing(_IsolatePayload p) async {
+    final pixels = p.pixels;
+    final w = p.width;
+    final h = p.height;
 
+    // Quality scoring
+    final blurScore = _computeBlurScore(pixels, w, h);
+    final brightnessScore = _computeBrightnessScore(pixels, w, h);
+    final qualityScore =
+    (blurScore * 0.6 + brightnessScore * 0.4).clamp(0.0, 1.0);
+
+    String? warning;
+    if (blurScore < 0.3) {
+      warning = 'Image appears blurry. Hold camera steady and retake.';
+    } else if (brightnessScore < 0.25) {
+      warning = 'Image too dark. Move to better light and retake.';
+    } else if (brightnessScore > 0.92) {
+      warning = 'Image overexposed. Avoid direct flash on white paper.';
+    }
+
+    // Grayscale
+    final gray = _toGrayscale(pixels, w, h);
+
+    // Adaptive contrast (CLAHE-style)
+    final enhanced = _adaptiveContrastEnhance(gray, w, h);
+
+    // Adaptive threshold (Sauvola) — window size adaptive to image resolution
+    final windowSize = _adaptiveWindowSize(w, h);
+    final thresholded = _adaptiveThreshold(enhanced, w, h, windowSize);
+
+    // Write BMP
+    final rgba = _grayscaleToRgba(thresholded, w, h);
+    final bmpBytes = _encodeBmp(rgba, w, h);
+    await File(p.outputPath).writeAsBytes(bmpBytes);
+
+    return _IsolateResult(qualityScore: qualityScore, warning: warning);
+  }
+
+  // ── Adaptive window size based on resolution ──────────────────────────
+  // Small images need smaller windows to avoid blurring thin text strokes
+  static int _adaptiveWindowSize(int w, int h) {
+    final megapixels = (w * h) / 1000000.0;
+    if (megapixels > 8) return 35;
+    if (megapixels > 4) return 25;
+    if (megapixels > 1) return 17;
+    return 11;
+  }
+
+  // ── Grayscale ─────────────────────────────────────────────────────────
   static Uint8List _toGrayscale(Uint8List rgba, int w, int h) {
     final gray = Uint8List(w * h);
     for (int i = 0; i < w * h; i++) {
       final r = rgba[i * 4];
       final g = rgba[i * 4 + 1];
       final b = rgba[i * 4 + 2];
-      // Luminance formula tuned for text on paper
       gray[i] = (0.299 * r + 0.587 * g + 0.114 * b).round().clamp(0, 255);
     }
     return gray;
   }
 
-  // ─── Adaptive contrast enhancement ──────────────────────────────────────
-  // Divides image into tiles, equalises each tile's histogram, then blends.
-  // This recovers text that standard global contrast adjustment would miss.
-
+  // ── CLAHE-style adaptive contrast ────────────────────────────────────
   static Uint8List _adaptiveContrastEnhance(Uint8List gray, int w, int h) {
     const tileSize = 64;
     final out = Uint8List.fromList(gray);
@@ -114,7 +155,6 @@ class ImagePreprocessor {
         final x1 = math.min(x0 + tileSize, w);
         final y1 = math.min(y0 + tileSize, h);
 
-        // Build histogram for this tile
         final hist = List<int>.filled(256, 0);
         for (int y = y0; y < y1; y++) {
           for (int x = x0; x < x1; x++) {
@@ -122,7 +162,6 @@ class ImagePreprocessor {
           }
         }
 
-        // Clip histogram (limits over-enhancement of noise)
         final clipLimit = ((x1 - x0) * (y1 - y0) * 0.02).round();
         int excess = 0;
         for (int i = 0; i < 256; i++) {
@@ -134,7 +173,6 @@ class ImagePreprocessor {
         final redistrib = excess ~/ 256;
         for (int i = 0; i < 256; i++) hist[i] += redistrib;
 
-        // Build LUT from CDF
         final lut = List<int>.filled(256, 0);
         int cdf = 0;
         final tilePixels = (x1 - x0) * (y1 - y0);
@@ -143,7 +181,6 @@ class ImagePreprocessor {
           lut[i] = ((cdf / tilePixels) * 255).round().clamp(0, 255);
         }
 
-        // Apply LUT to tile
         for (int y = y0; y < y1; y++) {
           for (int x = x0; x < x1; x++) {
             out[y * w + x] = lut[gray[y * w + x]];
@@ -154,15 +191,11 @@ class ImagePreprocessor {
     return out;
   }
 
-  // ─── Adaptive thresholding (Sauvola) ────────────────────────────────────
-  // Each pixel's threshold is computed from its local neighbourhood mean and
-  // standard deviation. Far superior to global threshold for handwriting.
-
-  static Uint8List _adaptiveThreshold(Uint8List gray, int w, int h) {
-    const windowSize = 25; // ~25px neighbourhood, adjust if text is tiny
-    const k = 0.15; // Sauvola sensitivity — higher = more ink preserved
-    const r = 128.0; // Dynamic range
-
+  // ── Sauvola adaptive threshold ────────────────────────────────────────
+  static Uint8List _adaptiveThreshold(
+      Uint8List gray, int w, int h, int windowSize) {
+    const k = 0.15;
+    const r = 128.0;
     final out = Uint8List(w * h);
     final half = windowSize ~/ 2;
 
@@ -188,19 +221,15 @@ class ImagePreprocessor {
 
         final mean = sum / count;
         final variance = (sumSq / count) - (mean * mean);
-        final stddev = variance > 0 ? math.sqrt(variance) : 0;
+        final stddev = variance > 0 ? math.sqrt(variance) : 0.0;
         final threshold = mean * (1.0 + k * ((stddev / r) - 1.0));
-
-        // White background (255) for paper, black (0) for ink
         out[y * w + x] = gray[y * w + x] > threshold ? 255 : 0;
       }
     }
     return out;
   }
 
-  // ─── Quality scoring ─────────────────────────────────────────────────────
-
-  /// Laplacian variance — higher = sharper image
+  // ── Quality scoring ───────────────────────────────────────────────────
   static double _computeBlurScore(Uint8List rgba, int w, int h) {
     if (w < 3 || h < 3) return 0.0;
     double variance = 0;
@@ -219,22 +248,21 @@ class ImagePreprocessor {
       }
     }
     variance /= count;
-    // Normalise: variance > 500 is sharp text, < 50 is too blurry
     return (variance / 500.0).clamp(0.0, 1.0);
   }
 
-  /// Average brightness normalised to [0, 1]
   static double _computeBrightnessScore(Uint8List rgba, int w, int h) {
     double total = 0;
     final pixels = w * h;
     for (int i = 0; i < pixels; i++) {
-      total += (0.299 * rgba[i * 4] + 0.587 * rgba[i * 4 + 1] + 0.114 * rgba[i * 4 + 2]);
+      total += (0.299 * rgba[i * 4] +
+          0.587 * rgba[i * 4 + 1] +
+          0.114 * rgba[i * 4 + 2]);
     }
     return ((total / pixels) / 255.0).clamp(0.0, 1.0);
   }
 
-  // ─── Helpers ─────────────────────────────────────────────────────────────
-
+  // ── Helpers ───────────────────────────────────────────────────────────
   static Uint8List _grayscaleToRgba(Uint8List gray, int w, int h) {
     final rgba = Uint8List(w * h * 4);
     for (int i = 0; i < w * h; i++) {
@@ -246,14 +274,6 @@ class ImagePreprocessor {
     return rgba;
   }
 
-  // Minimal PNG encoder — avoids needing an extra package just for encoding
-  static Uint8List _encodePng(Uint8List rgba, int w, int h) {
-    // Use Flutter's dart:ui image codec via a workaround:
-    // Write a raw BMP instead which ML Kit reads fine and is much simpler.
-    return _encodeBmp(rgba, w, h);
-  }
-
-  /// Encodes raw RGBA pixels as a 24-bit BMP (no alpha, white bg)
   static Uint8List _encodeBmp(Uint8List rgba, int w, int h) {
     final rowSize = ((w * 3 + 3) ~/ 4) * 4;
     final dataSize = rowSize * h;
@@ -264,6 +284,7 @@ class ImagePreprocessor {
       bmp[offset] = v & 0xff;
       bmp[offset + 1] = (v >> 8) & 0xff;
     }
+
     void writeInt32(int offset, int v) {
       bmp[offset] = v & 0xff;
       bmp[offset + 1] = (v >> 8) & 0xff;
@@ -271,42 +292,33 @@ class ImagePreprocessor {
       bmp[offset + 3] = (v >> 24) & 0xff;
     }
 
-    // File header
-    bmp[0] = 0x42; bmp[1] = 0x4D; // 'BM'
+    bmp[0] = 0x42;
+    bmp[1] = 0x4D;
     writeInt32(2, fileSize);
-    writeInt32(10, 54); // pixel data offset
-
-    // DIB header
-    writeInt32(14, 40); // header size
+    writeInt32(10, 54);
+    writeInt32(14, 40);
     writeInt32(18, w);
-    writeInt32(22, -h); // negative = top-down
-    writeInt16(26, 1);  // colour planes
-    writeInt16(28, 24); // bits per pixel
+    writeInt32(22, -h);
+    writeInt16(26, 1);
+    writeInt16(28, 24);
     writeInt32(34, dataSize);
 
-    // Pixel data (BGR, bottom-up reversed by negative height flag)
     int outIdx = 54;
     for (int y = 0; y < h; y++) {
       for (int x = 0; x < w; x++) {
         final i = (y * w + x) * 4;
-        // Blend alpha onto white background
         final a = rgba[i + 3] / 255.0;
-        bmp[outIdx++] = (rgba[i + 2] * a + 255 * (1 - a)).round(); // B
-        bmp[outIdx++] = (rgba[i + 1] * a + 255 * (1 - a)).round(); // G
-        bmp[outIdx++] = (rgba[i]     * a + 255 * (1 - a)).round(); // R
+        bmp[outIdx++] = (rgba[i + 2] * a + 255 * (1 - a)).round();
+        bmp[outIdx++] = (rgba[i + 1] * a + 255 * (1 - a)).round();
+        bmp[outIdx++] = (rgba[i] * a + 255 * (1 - a)).round();
       }
-      outIdx += rowSize - w * 3; // row padding
+      outIdx += rowSize - w * 3;
     }
-
     return bmp;
   }
 }
 
-// ─── Minimal image decoder (dart:ui wrapper) ─────────────────────────────
-// We can't use dart:ui in an isolate, so this runs on the main isolate only.
-// The compute() call above won't actually isolate the dart:ui decode step —
-// that's fine; the heavy CPU work (threshold, CLAHE) is what we isolate.
-
+// ── dart:ui image decoder — runs on main isolate only ────────────────────
 class _DecodedImage {
   final Uint8List pixels;
   final int width;
@@ -314,14 +326,12 @@ class _DecodedImage {
   _DecodedImage(this.pixels, this.width, this.height);
 }
 
-
 Future<_DecodedImage?> _decodeImage(Uint8List bytes) async {
   try {
     final codec = await ui.instantiateImageCodec(bytes);
     final frame = await codec.getNextFrame();
-    final byteData = await frame.image.toByteData(
-      format: ui.ImageByteFormat.rawRgba,
-    );
+    final byteData =
+    await frame.image.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (byteData == null) return null;
     return _DecodedImage(
       byteData.buffer.asUint8List(),
