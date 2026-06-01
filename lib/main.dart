@@ -1,6 +1,7 @@
-// lib/main.dart  (UPDATED — full Layer 1 + Layer 2 UI)
+// lib/main.dart — Redesigned UI with fixed image cropper settings
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'services/ocr_service.dart';
@@ -11,9 +12,29 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: '.env');
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+  ));
   runApp(const PrescriptionApp());
 }
 
+// ── Design tokens ──────────────────────────────────────────────────────────
+class AppColors {
+  static const bg = Color(0xFF0A0E1A);
+  static const surface = Color(0xFF111827);
+  static const card = Color(0xFF1A2235);
+  static const border = Color(0xFF2A3550);
+  static const accent = Color(0xFF3B82F6);
+  static const accentLight = Color(0xFF60A5FA);
+  static const accentGlow = Color(0x303B82F6);
+  static const success = Color(0xFF10B981);
+  static const warning = Color(0xFFF59E0B);
+  static const error = Color(0xFFEF4444);
+  static const textPrimary = Color(0xFFF1F5F9);
+  static const textSecondary = Color(0xFF94A3B8);
+  static const textMuted = Color(0xFF475569);
+}
 
 class PrescriptionApp extends StatelessWidget {
   const PrescriptionApp({super.key});
@@ -22,17 +43,26 @@ class PrescriptionApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      title: 'Medicine Reader',
       theme: ThemeData.dark().copyWith(
-        colorScheme: ColorScheme.dark(
-          primary: const Color(0xFF4A90D9),
-          surface: const Color(0xFF1A1A2E),
+        scaffoldBackgroundColor: AppColors.bg,
+        colorScheme: const ColorScheme.dark(
+          primary: AppColors.accent,
+          surface: AppColors.surface,
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF4A90D9),
+            backgroundColor: AppColors.accent,
             foregroundColor: Colors.white,
-            shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14)),
+            textStyle: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.3,
+            ),
           ),
         ),
       ),
@@ -48,7 +78,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   final _picker = ImagePicker();
   final _ocrService = OcrService();
 
@@ -57,9 +87,25 @@ class _HomePageState extends State<HomePage> {
   bool _isProcessing = false;
   String _processingStep = '';
 
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 0.97, end: 1.03).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+  }
+
   @override
   void dispose() {
     _ocrService.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -71,16 +117,35 @@ class _HomePageState extends State<HomePage> {
     );
     if (picked == null) return;
 
+    // Fixed: removed invalid IOSUiSettings params; added statusBarColor for Android
     final cropped = await ImageCropper().cropImage(
       sourcePath: picked.path,
       uiSettings: [
         AndroidUiSettings(
-          toolbarTitle: 'Align prescription',
-          toolbarColor: const Color(0xFF1A1A2E),
-          toolbarWidgetColor: Colors.white,
-          activeControlsWidgetColor: const Color(0xFF4A90D9),
+          toolbarTitle: 'Crop Prescription',
+          toolbarColor: AppColors.surface,
+          toolbarWidgetColor: AppColors.textPrimary,
+          statusBarColor: AppColors.bg,
+          backgroundColor: AppColors.bg,
+          activeControlsWidgetColor: AppColors.accent,
+          dimmedLayerColor: const Color(0xCC0A0E1A),
+          cropFrameColor: AppColors.accent,
+          cropGridColor: AppColors.accentLight,
+          cropFrameStrokeWidth: 3,
+          cropGridRowCount: 2,
+          cropGridColumnCount: 2,
           initAspectRatio: CropAspectRatioPreset.original,
           lockAspectRatio: false,
+          showCropGrid: true,
+          hideBottomControls: false,
+        ),
+        IOSUiSettings(
+          title: 'Crop Prescription',
+          cancelButtonTitle: 'Cancel',
+          doneButtonTitle: 'Done',
+          resetAspectRatioEnabled: true,
+          rotateButtonsHidden: false,
+          hidesNavigationBar: false,
         ),
       ],
     );
@@ -90,17 +155,17 @@ class _HomePageState extends State<HomePage> {
       _originalImage = File(cropped.path);
       _result = null;
       _isProcessing = true;
-      _processingStep = 'Enhancing image…';
+      _processingStep = 'Enhancing image quality…';
     });
 
     await Future.delayed(const Duration(milliseconds: 80));
-    setState(() => _processingStep = 'Layer 1 — OCR text extraction…');
+    setState(() => _processingStep = 'Extracting text (OCR)…');
     await Future.delayed(const Duration(milliseconds: 50));
 
     try {
       final result = await _ocrService.processImage(_originalImage!);
       if (result.hasAiResult) {
-        setState(() => _processingStep = 'Layer 2 — AI interpretation…');
+        setState(() => _processingStep = 'AI interpretation…');
       }
       setState(() {
         _result = result;
@@ -110,7 +175,10 @@ class _HomePageState extends State<HomePage> {
       setState(() => _isProcessing = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Processing failed: $e')),
+          SnackBar(
+            content: Text('Processing failed: $e'),
+            backgroundColor: AppColors.error,
+          ),
         );
       }
     }
@@ -119,144 +187,353 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F0F1A),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 12),
-              const Text(
-                'Prescription Reader',
-                style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'AI-powered handwriting interpretation',
-                style: TextStyle(color: Colors.white60, fontSize: 14),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
+      backgroundColor: AppColors.bg,
+      body: CustomScrollView(
+        slivers: [
+          _buildAppBar(),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+                const SizedBox(height: 20),
+                _buildImageSection(),
+                const SizedBox(height: 20),
+                _buildActionButtons(),
+                const SizedBox(height: 16),
+                if (_isProcessing) _buildProcessingCard(),
+                if (_result != null) ..._buildResults(),
+              ]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-              // Image preview
-              if (_originalImage != null)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Image.file(_originalImage!,
-                      height: 220, fit: BoxFit.cover),
-                )
-              else
-                Container(
-                  height: 160,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1A1A2E),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.white12),
-                  ),
-                  child: const Center(
-                    child: Icon(Icons.medication_rounded,
-                        size: 64, color: Color(0xFF4A90D9)),
-                  ),
-                ),
-
-              const SizedBox(height: 20),
-
-              // Action buttons
-              Row(
+  Widget _buildAppBar() {
+    return SliverAppBar(
+      expandedHeight: 110,
+      floating: false,
+      pinned: true,
+      backgroundColor: AppColors.bg,
+      elevation: 0,
+      flexibleSpace: FlexibleSpaceBar(
+        background: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF0F172A), Color(0xFF0A0E1A)],
+            ),
+          ),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _isProcessing
-                          ? null
-                          : () => _pickAndProcess(ImageSource.camera),
-                      icon: const Icon(Icons.camera_alt),
-                      label: const Text('Take Photo'),
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.accentGlow,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: AppColors.accent.withOpacity(0.4)),
                     ),
+                    child: const Icon(Icons.medication_rounded,
+                        color: AppColors.accentLight, size: 20),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _isProcessing
-                          ? null
-                          : () => _pickAndProcess(ImageSource.gallery),
-                      icon: const Icon(Icons.upload),
-                      label: const Text('Upload'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF4A90D9),
-                        side: const BorderSide(color: Color(0xFF4A90D9)),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 20),
-
-              // Processing indicator
-              if (_isProcessing)
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1A1A2E),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Color(0xFF4A90D9)),
+                      const Text(
+                        'Medicine Reader',
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.5,
+                        ),
                       ),
-                      const SizedBox(width: 16),
-                      Text(_processingStep,
-                          style:
-                          const TextStyle(color: Colors.white70)),
+                      Text(
+                        'AI Prescription Interpreter By Sadique',
+                        style: TextStyle(
+                          color: AppColors.textSecondary.withOpacity(0.7),
+                          fontSize: 12,
+                        ),
+                      ),
                     ],
                   ),
-                ),
-
-              // Results
-              if (_result != null) ...[
-                _QualityBadge(score: _result!.imageQualityScore),
-                if (_result!.warningMessage != null) ...[
-                  const SizedBox(height: 8),
-                  _WarningBanner(message: _result!.warningMessage!),
+                  const Spacer(),
+                  if (_result != null)
+                    _StatusPill(score: _result!.imageQualityScore),
                 ],
-                const SizedBox(height: 12),
-
-                // ── LAYER 2: AI interpreted medicines ──────────────────
-                if (_result!.hasAiResult) ...[
-                  _PrescriptionCard(result: _result!.prescriptionResult!),
-                  const SizedBox(height: 12),
-                ],
-
-                // ── LAYER 1: Raw OCR text (collapsible) ────────────────
-                _RawTextCard(result: _result!),
-                const SizedBox(height: 8),
-                _BlocksDebugView(blocks: _result!.blocks),
-              ],
-
-              const SizedBox(height: 32),
-            ],
+              ),
+            ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImageSection() {
+    if (_originalImage != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Stack(
+          children: [
+            Image.file(_originalImage!,
+                height: 230, width: double.infinity, fit: BoxFit.cover),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      AppColors.bg.withOpacity(0.6),
+                    ],
+                    stops: const [0.5, 1.0],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ScaleTransition(
+      scale: _pulseAnimation,
+      child: Container(
+        height: 200,
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.border, width: 1.5),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.accentGlow,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Icon(Icons.document_scanner_rounded,
+                  size: 32, color: AppColors.accentLight),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Scan or Upload Prescription',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Supports handwritten prescriptions',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButtons() {
+    return Row(
+      children: [
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed:
+            _isProcessing ? null : () => _pickAndProcess(ImageSource.camera),
+            icon: const Icon(Icons.camera_alt_rounded, size: 18),
+            label: const Text('Camera'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _OutlineBtn(
+            onPressed: _isProcessing
+                ? null
+                : () => _pickAndProcess(ImageSource.gallery),
+            icon: Icons.photo_library_rounded,
+            label: 'Gallery',
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProcessingCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.accent.withOpacity(0.3)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.accent.withOpacity(0.08),
+            blurRadius: 16,
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: AppColors.accent,
+              backgroundColor: AppColors.border,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              _processingStep,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildResults() {
+    return [
+      if (_result!.warningMessage != null) ...[
+        _WarningBanner(message: _result!.warningMessage!),
+        const SizedBox(height: 12),
+      ],
+      if (_result!.hasAiResult) ...[
+        _PrescriptionCard(result: _result!.prescriptionResult!),
+        const SizedBox(height: 12),
+      ],
+      _RawTextCard(result: _result!),
+      const SizedBox(height: 10),
+      _BlocksDebugView(blocks: _result!.blocks),
+    ];
+  }
+}
+
+// ── Shared Widgets ─────────────────────────────────────────────────────────
+
+class _OutlineBtn extends StatelessWidget {
+  final VoidCallback? onPressed;
+  final IconData icon;
+  final String label;
+  const _OutlineBtn(
+      {required this.onPressed, required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: AppColors.accentLight,
+        side: const BorderSide(color: AppColors.accent, width: 1.5),
+        shape:
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        textStyle: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.3,
         ),
       ),
     );
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// LAYER 2 UI — Prescription Card
-// ══════════════════════════════════════════════════════════════════════════
+class _StatusPill extends StatelessWidget {
+  final double score;
+  const _StatusPill({required this.score});
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = (score * 100).round();
+    final color = score > 0.7
+        ? AppColors.success
+        : score > 0.4
+        ? AppColors.warning
+        : AppColors.error;
+    final label = score > 0.7 ? 'Good' : score > 0.4 ? 'Fair' : 'Poor';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$label $pct%',
+            style: TextStyle(
+                color: color, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WarningBanner extends StatelessWidget {
+  final String message;
+  const _WarningBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.warning.withOpacity(0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded,
+              color: AppColors.warning, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(message,
+                style: const TextStyle(
+                    color: AppColors.warning, fontSize: 13)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── LAYER 2: Prescription Card ─────────────────────────────────────────────
 
 class _PrescriptionCard extends StatelessWidget {
   final PrescriptionResult result;
@@ -267,95 +544,105 @@ class _PrescriptionCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Header row
         Row(
           children: [
-            const Icon(Icons.auto_awesome, color: Color(0xFF4A90D9), size: 18),
-            const SizedBox(width: 8),
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: AppColors.accentGlow,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.auto_awesome_rounded,
+                  color: AppColors.accentLight, size: 16),
+            ),
+            const SizedBox(width: 10),
             const Text(
               'AI Interpretation',
               style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16),
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
+                letterSpacing: -0.3,
+              ),
             ),
             const Spacer(),
-            Container(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: result.isAiAssisted
-                    ? const Color(0xFF4A90D9).withOpacity(0.2)
-                    : Colors.orange.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: result.isAiAssisted
-                        ? const Color(0xFF4A90D9).withOpacity(0.5)
-                        : Colors.orange.withOpacity(0.5)),
-              ),
-              child: Text(
-                result.isAiAssisted ? 'AI + DB' : 'DB only',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: result.isAiAssisted
-                        ? const Color(0xFF4A90D9)
-                        : Colors.orange,
-                    fontWeight: FontWeight.w600),
-              ),
-            ),
+            _ModeBadge(isAi: result.isAiAssisted),
           ],
         ),
-        const SizedBox(height: 12),
-
-        // Medicines
+        const SizedBox(height: 14),
         if (result.medicines.isEmpty)
-          _emptyState()
+          _EmptyMedicines()
         else
           ...result.medicines.map((m) => _MedicineCard(medicine: m)),
-
-        // Patient instructions
         if (result.patientInstructions != null) ...[
           const SizedBox(height: 8),
-          _InfoBox(
-            icon: Icons.info_outline,
+          _InfoChip(
+            icon: Icons.info_outline_rounded,
             label: 'Instructions',
             text: result.patientInstructions!,
-            color: Colors.blue,
+            color: AppColors.accent,
           ),
         ],
-
-        // Interpretation warnings
         if (result.hasWarnings) ...[
           const SizedBox(height: 8),
           ...result.interpretationWarnings.map((w) => Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: _InfoBox(
-              icon: Icons.warning_amber,
-              label: 'Warning',
+            padding: const EdgeInsets.only(bottom: 6),
+            child: _InfoChip(
+              icon: Icons.warning_amber_rounded,
+              label: 'Note',
               text: w,
-              color: Colors.orange,
+              color: AppColors.warning,
             ),
           )),
         ],
       ],
     );
   }
+}
 
-  Widget _emptyState() => Container(
-    padding: const EdgeInsets.all(20),
-    decoration: BoxDecoration(
-      color: const Color(0xFF1A1A2E),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: Colors.white10),
-    ),
-    child: const Center(
-      child: Text(
-        'No medicines identified. Try a clearer photo.',
-        style: TextStyle(color: Colors.white54),
-        textAlign: TextAlign.center,
+class _ModeBadge extends StatelessWidget {
+  final bool isAi;
+  const _ModeBadge({required this.isAi});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isAi ? AppColors.accent : AppColors.warning;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.4)),
       ),
-    ),
-  );
+      child: Text(
+        isAi ? '✦ AI + DB' : 'DB only',
+        style: TextStyle(
+            fontSize: 11, color: color, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
+class _EmptyMedicines extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: const Center(
+        child: Text(
+          'No medicines identified.\nTry a clearer photo.',
+          style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
 }
 
 class _MedicineCard extends StatefulWidget {
@@ -370,9 +657,9 @@ class _MedicineCardState extends State<_MedicineCard> {
   bool _expanded = false;
 
   Color get _confidenceColor {
-    if (widget.medicine.isHighConfidence) return Colors.green;
-    if (widget.medicine.isMediumConfidence) return Colors.orange;
-    return Colors.red;
+    if (widget.medicine.isHighConfidence) return AppColors.success;
+    if (widget.medicine.isMediumConfidence) return AppColors.warning;
+    return AppColors.error;
   }
 
   @override
@@ -382,97 +669,129 @@ class _MedicineCardState extends State<_MedicineCard> {
       onTap: () => setState(() => _expanded = !_expanded),
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A2E),
-          borderRadius: BorderRadius.circular(12),
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
-              color: _confidenceColor.withOpacity(0.3), width: 1.2),
+              color: _confidenceColor.withOpacity(0.25), width: 1.2),
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                // Medicine name
-                Expanded(
-                  child: Text(
-                    m.name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        margin: const EdgeInsets.only(right: 10, top: 2),
+                        decoration: BoxDecoration(
+                          color: _confidenceColor,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: _confidenceColor.withOpacity(0.4),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          m.name,
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${(m.confidence * 100).round()}%',
+                        style: TextStyle(
+                          color: _confidenceColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        _expanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        color: AppColors.textMuted,
+                        size: 18,
+                      ),
+                    ],
+                  ),
+                  if (m.fullDosage.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      m.fullDosage,
+                      style: const TextStyle(
+                        color: AppColors.accentLight,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
-                ),
-                // Confidence badge
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: _confidenceColor.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: _confidenceColor.withOpacity(0.4)),
-                  ),
-                  child: Text(
-                    '${(m.confidence * 100).round()}%',
-                    style: TextStyle(
-                        color: _confidenceColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Icon(
-                    _expanded
-                        ? Icons.expand_less
-                        : Icons.expand_more,
-                    color: Colors.white38,
-                    size: 18),
-              ],
+                  ],
+                  if (m.specialInstructions != null) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      m.specialInstructions!,
+                      style: const TextStyle(
+                          color: AppColors.textMuted, fontSize: 12),
+                    ),
+                  ],
+                ],
+              ),
             ),
-
-            if (m.fullDosage.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(
-                m.fullDosage,
-                style: const TextStyle(
-                    color: Color(0xFF4A90D9), fontSize: 13),
-              ),
-            ],
-
-            if (m.specialInstructions != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                m.specialInstructions!,
-                style:
-                const TextStyle(color: Colors.white54, fontSize: 12),
-              ),
-            ],
-
-            // Expanded detail
             if (_expanded) ...[
-              const Divider(color: Colors.white10, height: 16),
-              if (m.rawOcr.isNotEmpty)
-                _DetailRow('OCR read', m.rawOcr),
-              if (m.dose.isNotEmpty) _DetailRow('Dose', m.dose),
-              if (m.frequency.isNotEmpty)
-                _DetailRow('Frequency', m.frequency),
-              if (m.duration.isNotEmpty)
-                _DetailRow('Duration', m.duration),
-              if (m.route != null) _DetailRow('Route', m.route!),
-              if (m.correctionsMade.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                const Text('Corrections made:',
-                    style: TextStyle(
-                        color: Colors.white38, fontSize: 11)),
-                ...m.correctionsMade.map((c) => Text(
-                  '• $c',
-                  style: const TextStyle(
-                      color: Colors.white38, fontSize: 11),
-                )),
-              ],
+              Container(height: 1, color: AppColors.border),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                child: Column(
+                  children: [
+                    if (m.rawOcr.isNotEmpty) _DetailRow('OCR text', m.rawOcr),
+                    if (m.dose.isNotEmpty) _DetailRow('Dose', m.dose),
+                    if (m.frequency.isNotEmpty)
+                      _DetailRow('Frequency', m.frequency),
+                    if (m.duration.isNotEmpty)
+                      _DetailRow('Duration', m.duration),
+                    if (m.route != null) _DetailRow('Route', m.route!),
+                    if (m.correctionsMade.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(
+                            width: 84,
+                            child: Text('Corrections',
+                                style: TextStyle(
+                                    color: AppColors.textMuted,
+                                    fontSize: 12)),
+                          ),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: m.correctionsMade
+                                  .map((c) => Text('• $c',
+                                  style: const TextStyle(
+                                      color: AppColors.textMuted,
+                                      fontSize: 12)))
+                                  .toList(),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ],
           ],
         ),
@@ -481,32 +800,34 @@ class _MedicineCardState extends State<_MedicineCard> {
   }
 
   Widget _DetailRow(String label, String value) => Padding(
-    padding: const EdgeInsets.only(bottom: 3),
+    padding: const EdgeInsets.only(bottom: 5),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 80,
+          width: 84,
           child: Text(label,
               style: const TextStyle(
-                  color: Colors.white38, fontSize: 12)),
+                  color: AppColors.textMuted, fontSize: 12)),
         ),
         Expanded(
           child: Text(value,
               style: const TextStyle(
-                  color: Colors.white70, fontSize: 12)),
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500)),
         ),
       ],
     ),
   );
 }
 
-class _InfoBox extends StatelessWidget {
+class _InfoChip extends StatelessWidget {
   final IconData icon;
   final String label;
   final String text;
   final Color color;
-  const _InfoBox(
+  const _InfoChip(
       {required this.icon,
         required this.label,
         required this.text,
@@ -517,94 +838,27 @@ class _InfoBox extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.3)),
+        color: color.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.25)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, color: color, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(text,
-                style:
-                TextStyle(color: color.withOpacity(0.9), fontSize: 13)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// LAYER 1 UI — Quality, Raw Text, Blocks (unchanged from your original)
-// ══════════════════════════════════════════════════════════════════════════
-
-class _QualityBadge extends StatelessWidget {
-  final double score;
-  const _QualityBadge({required this.score});
-
-  @override
-  Widget build(BuildContext context) {
-    final pct = (score * 100).round();
-    final color =
-    score > 0.7 ? Colors.green : score > 0.4 ? Colors.orange : Colors.red;
-    final label = score > 0.7
-        ? 'Good quality'
-        : score > 0.4
-        ? 'Acceptable'
-        : 'Poor quality';
-    return Row(
-      children: [
-        Container(
-          padding:
-          const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: color.withOpacity(0.4)),
-          ),
-          child: Text(
-            '$label  $pct%',
-            style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w600),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _WarningBanner extends StatelessWidget {
-  final String message;
-  const _WarningBanner({required this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.orange.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.orange.withOpacity(0.4)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.warning_amber_rounded,
-              color: Colors.orange, size: 18),
           const SizedBox(width: 10),
           Expanded(
-              child: Text(message,
-                  style: const TextStyle(
-                      color: Colors.orange, fontSize: 13))),
+            child: Text(text,
+                style: TextStyle(
+                    color: color.withOpacity(0.85), fontSize: 13)),
+          ),
         ],
       ),
     );
   }
 }
+
+// ── LAYER 1: Raw OCR + Blocks ──────────────────────────────────────────────
 
 class _RawTextCard extends StatefulWidget {
   final OcrResult result;
@@ -619,62 +873,68 @@ class _RawTextCardState extends State<_RawTextCard> {
 
   @override
   Widget build(BuildContext context) {
+    final raw = widget.result.rawText;
+    final preview = raw.isEmpty
+        ? '(no text detected)'
+        : raw.split('\n').take(2).join(' ').substring(
+        0, raw.length > 55 ? 55 : raw.length);
+
     return GestureDetector(
       onTap: () => setState(() => _expanded = !_expanded),
       child: Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A2E),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white10),
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Layer 1 — Raw OCR text',
-                    style: TextStyle(color: Colors.white60, fontSize: 12)),
-                Row(
-                  children: [
-                    Text('${widget.result.processingMs}ms',
-                        style: const TextStyle(
-                            color: Colors.white30, fontSize: 11)),
-                    const SizedBox(width: 6),
-                    Icon(_expanded ? Icons.expand_less : Icons.expand_more,
-                        color: Colors.white30, size: 16),
-                  ],
+                const Icon(Icons.text_fields_rounded,
+                    size: 15, color: AppColors.textMuted),
+                const SizedBox(width: 8),
+                const Text(
+                  'Raw OCR Text',
+                  style: TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.3),
+                ),
+                const Spacer(),
+                Text(
+                  '${widget.result.processingMs}ms',
+                  style: const TextStyle(
+                      color: AppColors.textMuted, fontSize: 11),
+                ),
+                const SizedBox(width: 6),
+                Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  color: AppColors.textMuted,
+                  size: 16,
                 ),
               ],
             ),
-            if (_expanded) ...[
-              const SizedBox(height: 8),
-              Text(
-                widget.result.rawText.isEmpty
-                    ? '(no text detected)'
-                    : widget.result.rawText,
-                style: const TextStyle(
-                    color: Colors.white, fontSize: 13, height: 1.6),
+            const SizedBox(height: 8),
+            Text(
+              _expanded
+                  ? (raw.isEmpty ? '(no text detected)' : raw)
+                  : '$preview…',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+                height: 1.5,
+                fontFamily: 'monospace',
               ),
-            ] else
-              const SizedBox(height: 4),
-            if (!_expanded)
-              Text(
-                widget.result.rawText.isEmpty
-                    ? '(no text)'
-                    : widget.result.rawText
-                    .split('\n')
-                    .take(2)
-                    .join(' ')
-                    .substring(0,
-                    widget.result.rawText.length > 60 ? 60 : widget.result.rawText.length) +
-                    '…',
-                style: const TextStyle(
-                    color: Colors.white54, fontSize: 12),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              maxLines: _expanded ? null : 2,
+              overflow:
+              _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+            ),
           ],
         ),
       ),
@@ -695,59 +955,85 @@ class _BlocksDebugViewState extends State<_BlocksDebugView> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.blocks.isEmpty) return const SizedBox();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         GestureDetector(
           onTap: () => setState(() => _expanded = !_expanded),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
+            padding: const EdgeInsets.symmetric(vertical: 8),
             child: Row(
               children: [
                 Text(
                   '${widget.blocks.length} text blocks detected',
                   style: const TextStyle(
-                      color: Colors.white30, fontSize: 12),
+                      color: AppColors.textMuted, fontSize: 12),
                 ),
                 const Spacer(),
-                Icon(_expanded ? Icons.expand_less : Icons.expand_more,
-                    color: Colors.white30, size: 16),
+                Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  color: AppColors.textMuted,
+                  size: 16,
+                ),
               ],
             ),
           ),
         ),
         if (_expanded)
-          ...widget.blocks.map((b) => Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 38,
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text(
-                    '${(b.confidence * 100).round()}%',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: b.confidence > 0.7
-                          ? Colors.green
-                          : b.confidence > 0.4
-                          ? Colors.orange
-                          : Colors.red,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(b.text,
-                      style: const TextStyle(
-                          color: Colors.white54,
-                          fontSize: 12,
-                          height: 1.4)),
-                ),
-              ],
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border),
             ),
-          )),
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: widget.blocks.map((b) {
+                final conf = (b.confidence * 100).round();
+                final color = b.confidence > 0.7
+                    ? AppColors.success
+                    : b.confidence > 0.4
+                    ? AppColors.warning
+                    : AppColors.error;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 36,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: color.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '$conf%',
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: color,
+                              fontWeight: FontWeight.w600),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(b.text,
+                            style: const TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 12,
+                                height: 1.4)),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
       ],
     );
   }

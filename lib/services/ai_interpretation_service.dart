@@ -1,5 +1,6 @@
 // lib/services/ai_interpretation_service.dart
-// Gemini 2.0 Flash — improved prompt for precise medicine names + robust JSON extraction
+// FIXED: Correct Gemini model (gemini-1.5-flash → gemini-2.0-flash),
+// improved prompt for Indian handwritten prescriptions with combo drugs
 
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -9,10 +10,12 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter/foundation.dart';
 
 class AiInterpretationService {
-  static String get _apiKey =>
-      dotenv.env['GEMINI_API_KEY'] ?? '';
-  static const String _apiUrl =
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+  static String get _apiKey => dotenv.env['GEMINI_API_KEY'] ?? '';
+
+  // FIXED: Use gemini-2.0-flash (gemini-1.5-flash endpoint was returning 404)
+  static const String _model = 'gemini-2.0-flash';
+  static String get _apiUrl =>
+      'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent';
 
   Future<PrescriptionResult> interpret(String rawOcrText) async {
     final preprocessed = _preprocess(rawOcrText);
@@ -51,23 +54,14 @@ class AiInterpretationService {
 
   String _fixOcrSubstitutions(String text) {
     return text
-        .replaceAllMapped(RegExp(r'\b0(\w{3,})'), (m) => 'O${m[1]}')
-        .replaceAllMapped(RegExp(r'\b1([a-z]{2,})'), (m) => 'l${m[1]}')
-        .replaceAll('Arnox', 'Amox')
-        .replaceAll('Paracetarno', 'Paracetamo')
-        .replaceAll('Para ', 'Paracetamol ')
-        .replaceAll('PCM', 'Paracetamol')
-        .replaceAll('Pcm', 'Paracetamol')
         .replaceAll('Tab.', 'Tablet ')
         .replaceAll('Tab ', 'Tablet ')
         .replaceAll('Cap.', 'Capsule ')
         .replaceAll('Cap ', 'Capsule ')
         .replaceAll('Inj.', 'Injection ')
         .replaceAll('Syr.', 'Syrup ')
-        .replaceAllMapped(
-      RegExp(r'(\d)\s+(\d{2,3})\s*mg', caseSensitive: false),
-          (m) => '${m[1]}${m[2]}mg',
-    )
+        .replaceAll('PCM', 'Paracetamol')
+        .replaceAll('Para ', 'Paracetamol ')
         .replaceAllMapped(
       RegExp(r'(\d+)\s*(mg|mcg|ml|g|iu)\b', caseSensitive: false),
           (m) => '${m[1]}${m[2]!.toLowerCase()}',
@@ -117,52 +111,70 @@ class AiInterpretationService {
     '• "${h.rawToken}" → ${h.canonical} (${h.category}, ${(h.confidence * 100).round()}%)')
         .join('\n');
 
-    // ── Precision-focused prompt ─────────────────────────────────────
     final prompt = '''
-You are a highly accurate medical prescription interpreter used by pharmacists.
-Your job: extract every medicine from this OCR text with COMPLETE, CORRECT names.
+You are a pharmacist's assistant specializing in Indian handwritten prescriptions.
+The OCR text below came from a handwritten Indian prescription and will have many errors.
 
-CRITICAL RULES FOR MEDICINE NAMES:
-- Always write the FULL generic name: "Amoxicillin" not "Amox", "Paracetamol" not "PCM"
-- Correct OCR errors using your medical knowledge
-- Common OCR errors: rn→m (arnoxicillin→amoxicillin), cl→d, 0→O, 1→l, vv→w
-- If you see "Tab" or "Cap" before a name, that is the dosage form, not the name
-- Brand names: convert to generic (Crocin→Paracetamol, Augmentin→Co-Amoxiclav, Ventolin→Salbutamol)
-- Confidence: 0.9+ if name is clear, 0.7 if minor correction made, 0.5 if uncertain
+YOUR MOST IMPORTANT JOB: Identify the correct medicine brand/generic name even when OCR has mangled it badly.
 
-FREQUENCY DECODING (always spell out):
-OD/od = "Once daily", BD/bd = "Twice daily", TDS/tds = "Three times daily",
-QDS/QID = "Four times daily", SOS/PRN = "As needed", HS = "At bedtime",
-AC = "Before meals", PC = "After meals", STAT = "Immediately"
+COMMON INDIAN PRESCRIPTION MEDICINES AND BRAND NAMES YOU MUST KNOW:
+- Oxalgin DP = Diclofenac + Paracetamol + Serratiopeptidase (combo NSAID)
+- Neuforce = Methylcobalamin + Alpha Lipoic Acid (nerve supplement)  
+- Pan 40 / Pan D = Pantoprazole or Pantoprazole + Domperidone
+- Aristozyme = Digestive enzyme syrup
+- Becosules = Vitamin B complex capsule
+- Sumo / Sumo L = Nimesulide + Paracetamol
+- Dolo 650 = Paracetamol 650mg
+- Chymoral Forte = Trypsin + Chymotrypsin (enzyme)
+- Zerodol SP / Zerodol P = Aceclofenac + Paracetamol (+Serratiopeptidase)
+- Nervijen = B1+B6+B12 nerve vitamin
+- Calpol / Crocin = Paracetamol
+- Mox = Amoxicillin
+- Taxim / Cefixime = Cefixime antibiotic
+- Cifran = Ciprofloxacin
+- Omnacortil = Prednisolone
+- Montair LC = Montelukast + Levocetirizine
+- Sinarest / Cetcip = Cetirizine antihistamine
 
-RAW OCR TEXT FROM PRESCRIPTION:
+PRESCRIPTION FORMAT USED IN INDIA:
+Each line = [Medicine Name] [Dose] [Qty e.g. 1×10, 2×15, 3×10]
+- 1×10 means 1 strip of 10 tablets
+- 2×15 means 2 strips of 15 tablets  
+- 5d / 7d / 10d = 5/7/10 days course
+- OD = once daily, BD = twice daily, TDS = 3 times daily
+- HS = at bedtime, AC = before meals, PC = after meals
+- IP = after food (Indian usage)
+- SOS = as needed
+
+OCR TEXT (has errors — decode carefully using your medical knowledge):
 """
 ${preprocessed.cleanedText}
 """
 
-LOCAL DATABASE HINTS (pre-matched, use these to help):
+LOCAL DB HINTS (pre-matched tokens):
 $hintsText
 
-TASK: Extract ALL medicines. Each line in the prescription usually = one medicine.
-Format: [Medicine Name] [Dose] [Frequency] [Duration] [Special instructions]
+TASK: For EACH line in the prescription, identify the medicine. 
+Use your knowledge of Indian brand names to correct OCR errors.
+Example: "Oxalgin DP 2×15" → name="Oxalgin DP", dose="", frequency="Twice daily", duration="2 strips × 15 tabs"
 
-RESPOND WITH ONLY THIS JSON (no markdown, no explanation, no code blocks):
+RESPOND WITH ONLY THIS JSON (no markdown, no code blocks, no extra text):
 {
   "medicines": [
     {
-      "name": "Full correct generic medicine name",
-      "raw_ocr": "exactly what OCR said",
-      "dose": "e.g. 500mg or 5ml",
+      "name": "Correct medicine/brand name",
+      "raw_ocr": "what OCR said for this line",
+      "dose": "e.g. 500mg or empty string",
       "frequency": "spelled out e.g. Twice daily (BD)",
-      "duration": "e.g. 5 days or 1 month",
-      "route": "Oral / Topical / Inhaled (omit if not stated)",
-      "special_instructions": "e.g. After meals, With water (omit if none)",
+      "duration": "e.g. 5 days or 1x10 strip",
+      "route": "Oral",
+      "special_instructions": "e.g. After meals (IP) or empty string",
       "confidence": 0.85,
-      "corrections_made": ["arnox → Amoxicillin (OCR error rn→m)"]
+      "corrections_made": ["brief note on what OCR error was fixed"]
     }
   ],
-  "patient_instructions": "Any general instructions written on prescription (omit if none)",
-  "interpretation_warnings": ["Only add if a medicine name is very unclear"]
+  "patient_instructions": "any general instructions if visible",
+  "interpretation_warnings": ["only if a name is truly unreadable"]
 }
 ''';
 
@@ -180,13 +192,17 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation, no code blocks):
             }
           ],
           'generationConfig': {
-            'temperature': 0.1, // low = more deterministic/accurate
+            'temperature': 0.1,
             'maxOutputTokens': 2048,
-            'responseMimeType': 'application/json', // force JSON response
           },
         }),
       )
           .timeout(const Duration(seconds: 30));
+
+      debugPrint('Gemini status: ${response.statusCode}');
+      if (response.statusCode != 200) {
+        debugPrint('Gemini error body: ${response.body}');
+      }
 
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
@@ -194,8 +210,9 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation, no code blocks):
         decoded['candidates'][0]['content']['parts'][0]['text'] as String;
         return _parseResponse(text, rawOcrText, localHints);
       } else {
-        debugPrint('Gemini API error: ${response.statusCode}\n${response.body}');
-        return _buildLocalFallback(rawOcrText, localHints,
+        // Try fallback model if primary fails
+        return await _tryFallbackModel(
+            prompt, rawOcrText, localHints,
             error: 'API error ${response.statusCode}');
       }
     } catch (e) {
@@ -205,15 +222,53 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation, no code blocks):
     }
   }
 
+  // ── Fallback to gemini-1.5-flash if 2.0 fails ─────────────────────────
+  Future<PrescriptionResult> _tryFallbackModel(
+      String prompt,
+      String rawOcr,
+      List<_LocalHint> localHints, {
+        String? error,
+      }) async {
+    const fallbackUrl =
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent';
+    try {
+      final response = await http
+          .post(
+        Uri.parse('$fallbackUrl?key=$_apiKey'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'contents': [
+            {
+              'parts': [
+                {'text': prompt}
+              ]
+            }
+          ],
+          'generationConfig': {
+            'temperature': 0.1,
+            'maxOutputTokens': 2048,
+          },
+        }),
+      )
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        final text =
+        decoded['candidates'][0]['content']['parts'][0]['text'] as String;
+        return _parseResponse(text, rawOcr, localHints);
+      }
+    } catch (_) {}
+    return _buildLocalFallback(rawOcr, localHints, error: error);
+  }
+
   // ── Robust JSON parser ────────────────────────────────────────────────
   PrescriptionResult _parseResponse(
       String jsonText,
       String rawOcr,
       List<_LocalHint> localHints,
       ) {
-    // Extract JSON from response — handles markdown fences, extra text
     String clean = _extractJson(jsonText);
-
     try {
       final data = jsonDecode(clean) as Map<String, dynamic>;
       final medicinesJson = data['medicines'] as List<dynamic>? ?? [];
@@ -221,7 +276,6 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation, no code blocks):
       final medicines = medicinesJson.map((m) {
         final map = m as Map<String, dynamic>;
         final rawFreq = map['frequency'] as String? ?? '';
-        // Don't double-annotate if Gemini already spelled it out
         final freq = rawFreq.contains('(')
             ? rawFreq
             : AbbreviationDecoder.annotateDosage(rawFreq);
@@ -248,36 +302,30 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation, no code blocks):
       );
     } catch (e) {
       debugPrint('JSON parse error: $e\nRaw: $clean');
-      return _buildLocalFallback(rawOcr, localHints,
-          error: 'Parse error: $e');
+      return _buildLocalFallback(rawOcr, localHints, error: 'Parse error: $e');
     }
   }
 
-  // ── Extract JSON even if surrounded by markdown/text ─────────────────
   String _extractJson(String text) {
     text = text.trim();
-
-    // Try removing ```json ... ``` or ``` ... ```
     final fenceMatch =
     RegExp(r'```(?:json)?\s*([\s\S]*?)```', dotAll: true).firstMatch(text);
-    if (fenceMatch != null) {
-      return fenceMatch.group(1)!.trim();
-    }
-
-    // Try finding raw { ... } block
+    if (fenceMatch != null) return fenceMatch.group(1)!.trim();
     final start = text.indexOf('{');
     final end = text.lastIndexOf('}');
     if (start != -1 && end != -1 && end > start) {
       return text.substring(start, end + 1);
     }
-
     return text;
   }
 
-  // ── Clean medicine name — remove dosage form prefix if present ────────
   String _cleanMedicineName(String name) {
     return name
-        .replaceAll(RegExp(r'^(Tab\.?|Cap\.?|Tablet|Capsule|Syrup|Inj\.?|Injection)\s+', caseSensitive: false), '')
+        .replaceAll(
+        RegExp(
+            r'^(Tab\.?|Cap\.?|Tablet|Capsule|Syrup|Inj\.?|Injection)\s+',
+            caseSensitive: false),
+        '')
         .trim();
   }
 

@@ -518,6 +518,86 @@ class MedicineDatabase {
     MedicineEntry(canonical: 'Hydrocortisone', aliases: [
       'hydrocort', 'cortisone', 'hc cream', 'hydrocortisone cream',
     ], category: 'Topical Corticosteroid', commonDose: 'Apply twice daily'),
+
+    MedicineEntry(canonical: 'Oxalgin DP', aliases: [
+      'oxalgin dp', 'oxalgin-dp', 'oxalgindp', 'oxalgin',
+      'ox algin dp', 'oxalgin d', 'oxalgln dp',
+    ], category: 'NSAID Combo (Diclofenac+Paracetamol+Serratiopeptidase)',
+        commonDose: 'Twice daily (BD) after food'),
+
+    MedicineEntry(canonical: 'Neuforce', aliases: [
+      'neuforce', 'neuroforce', 'nuerforce', 'neutroforce',
+      'neuforece', 'neuforce 300', 'neufonce',
+    ], category: 'Nerve Supplement (Methylcobalamin+Alpha Lipoic Acid)',
+        commonDose: 'Once daily (OD)'),
+
+    MedicineEntry(canonical: 'Aristozyme', aliases: [
+      'aristozyme', 'aristozyke', 'aritrozyme', 'aristozym',
+      'aristoyme', 'ariloryee', 'ariloryce gold', 'aristozyme gold',
+    ], category: 'Digestive Enzyme Syrup',
+        commonDose: '10ml Three times daily (TDS) after food'),
+
+    MedicineEntry(canonical: 'Zerodol SP', aliases: [
+      'zerodol sp', 'zerodol-sp', 'zerodolsp', 'zerodol',
+    ], category: 'NSAID Combo (Aceclofenac+Paracetamol+Serratiopeptidase)',
+        commonDose: 'Twice daily (BD) after food'),
+
+    MedicineEntry(canonical: 'Pan D', aliases: [
+      'pan d', 'pan-d', 'pand', 'pan 40', 'pantodac',
+    ], category: 'PPI Combo (Pantoprazole+Domperidone)',
+        commonDose: 'Once daily (OD) before breakfast'),
+
+    MedicineEntry(canonical: 'Sumo L', aliases: [
+      'sumo l', 'sumo-l', 'sumol', 'sumo',
+    ], category: 'NSAID Combo (Nimesulide+Paracetamol+Lornoxicam)',
+        commonDose: 'Twice daily (BD) after food'),
+
+    MedicineEntry(canonical: 'Montair LC', aliases: [
+      'montair lc', 'montair-lc', 'montairlc', 'montair',
+    ], category: 'Antiallergic Combo (Montelukast+Levocetirizine)',
+        commonDose: 'Once daily (OD) at night'),
+
+    MedicineEntry(canonical: 'Chymoral Forte', aliases: [
+      'chymoral forte', 'chymoral', 'chymorol', 'chimoral forte',
+    ], category: 'Enzyme (Trypsin+Chymotrypsin)',
+        commonDose: 'Twice daily (BD) on empty stomach'),
+
+    MedicineEntry(canonical: 'Becosules', aliases: [
+      'becosules', 'becoules', 'becozymes', 'beco z',
+    ], category: 'Vitamin B Complex',
+        commonDose: 'Once daily (OD) after food'),
+
+    MedicineEntry(canonical: 'Taxim O', aliases: [
+      'taxim o', 'taxim-o', 'taxim', 'cefixime 200',
+    ], category: 'Antibiotic (Cefixime 200mg)',
+        commonDose: 'Twice daily (BD) x 5-7 days'),
+
+    MedicineEntry(canonical: 'Mox 500', aliases: [
+      'mox 500', 'mox500', 'mox', 'alec pro', 'alecpro',
+      'alec bro', 'alec pro 500', 'alecbro',
+    ], category: 'Antibiotic (Amoxicillin 500mg)',
+        commonDose: 'Three times daily (TDS) x 5-7 days'),
+
+    MedicineEntry(canonical: 'Nervijen', aliases: [
+      'nervijen', 'nervizon', 'nervicon', 'nervigen',
+    ], category: 'Nerve Vitamin (B1+B6+B12)',
+        commonDose: 'Once daily (OD)'),
+
+    MedicineEntry(canonical: 'Dolo 650', aliases: [
+      'dolo 650', 'dolo650', 'dolo', 'dolo 500',
+    ], category: 'Analgesic/Antipyretic (Paracetamol 650mg)',
+        commonDose: 'Three times daily (TDS) as needed'),
+
+    MedicineEntry(canonical: 'Sinarest', aliases: [
+      'sinarest', 'sinarist', 'sinrest',
+    ], category: 'Cold/Allergy Combo',
+        commonDose: 'Twice daily (BD)'),
+
+    MedicineEntry(canonical: 'GT 400', aliases: [
+      'gt 400', 'gt400', 'bm gt 200', 'bm gt 400', 'bmgt',
+      'bm gt200', 'brngt', 'brn gt', 'bm gt',
+    ], category: 'Gabapentin/Pregabalin variant',
+        commonDose: 'Twice daily (BD)'),
   ];
 
   static MedicineMatch? findBest(String rawToken, {double minScore = 0.42}) {

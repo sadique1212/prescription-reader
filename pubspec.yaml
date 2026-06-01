@@ -14,7 +14,8 @@ dependencies:
   google_mlkit_text_recognition: ^0.13.0
   flutter_dotenv: ^5.1.0
   image_cropper: ^8.0.1
-  http: ^1.6.0          # NEW — for Claude API calls (already a transitive dep, now explicit)
+  http: ^1.6.0
+  path_provider: ^2.1.2   # NEW — for Claude API calls (already a transitive dep, now explicit)
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
@@ -24,3 +25,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - .env

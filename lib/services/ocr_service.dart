@@ -1,5 +1,7 @@
 // lib/services/ocr_service.dart
-// Fixed: correct TextRecognitionScript enum, better error handling
+// FIXED: Removed Devanagari recognizer — ML Kit Devanagari model is not
+// bundled by default and throws ClassNotFoundException at runtime on Android.
+// Latin script handles printed English medicine names well enough.
 
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -10,10 +12,10 @@ import 'image_preprocessor.dart';
 import 'ai_interpretation_service.dart';
 
 class OcrService {
-  final _latinRecognizer =
-  TextRecognizer(script: TextRecognitionScript.latin);
-  final _devanagariRecognizer =
-  TextRecognizer(script: TextRecognitionScript.devanagiri);
+  // Latin only — covers all printed English/Roman-script prescriptions.
+  // Devanagari requires a separately downloaded ML Kit model that is NOT
+  // included in the default google_mlkit_text_recognition package on Android.
+  final _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
   final _aiService = AiInterpretationService();
 
   /// Full pipeline: preprocess → OCR → AI interpretation
@@ -33,41 +35,28 @@ class OcrService {
       );
     }
 
-    // ── Layer 1b: Multi-script OCR ────────────────────────────────────
+    // ── Layer 1b: OCR ─────────────────────────────────────────────────
     final inputImage = InputImage.fromFile(preprocessed.processedFile);
 
-    RecognizedText latinResult;
-    RecognizedText devanagariResult;
-
+    RecognizedText ocrResult;
     try {
-      final results = await Future.wait([
-        _latinRecognizer.processImage(inputImage),
-        _devanagariRecognizer.processImage(inputImage),
-      ]);
-      latinResult = results[0] as RecognizedText;
-      devanagariResult = results[1] as RecognizedText;
+      ocrResult = await _recognizer.processImage(inputImage);
     } catch (e) {
       debugPrint('OCR failed: $e');
-      // Try latin only as fallback
-      try {
-        latinResult = await _latinRecognizer.processImage(inputImage);
-        devanagariResult = RecognizedText(text: '', blocks: []);
-      } catch (e2) {
-        stopwatch.stop();
-        return OcrResult(
-          rawText: '',
-          blocks: [],
-          imageQualityScore: preprocessed.qualityScore,
-          processingMs: stopwatch.elapsedMilliseconds,
-          warningMessage: 'OCR failed: $e2',
-        );
-      }
+      stopwatch.stop();
+      return OcrResult(
+        rawText: '',
+        blocks: [],
+        imageQualityScore: preprocessed.qualityScore,
+        processingMs: stopwatch.elapsedMilliseconds,
+        warningMessage: 'OCR failed: $e',
+      );
     }
 
-    // ── Merge blocks ──────────────────────────────────────────────────
+    // ── Build block list ──────────────────────────────────────────────
     final allBlocks = <OcrBlock>[];
 
-    for (final block in latinResult.blocks) {
+    for (final block in ocrResult.blocks) {
       allBlocks.add(OcrBlock(
         text: block.text,
         confidence: _avgConfidence(block),
@@ -76,19 +65,6 @@ class OcrService {
         width: block.boundingBox.width.round(),
         height: block.boundingBox.height.round(),
       ));
-    }
-
-    for (final block in devanagariResult.blocks) {
-      if (!_overlapsExisting(allBlocks, block.boundingBox)) {
-        allBlocks.add(OcrBlock(
-          text: block.text,
-          confidence: _avgConfidence(block),
-          left: block.boundingBox.left.round(),
-          top: block.boundingBox.top.round(),
-          width: block.boundingBox.width.round(),
-          height: block.boundingBox.height.round(),
-        ));
-      }
     }
 
     // Sort top-to-bottom, left-to-right
@@ -148,17 +124,7 @@ class OcrService {
     return count > 0 ? total / count : 0.0;
   }
 
-  bool _overlapsExisting(List<OcrBlock> existing, dynamic rect) {
-    for (final b in existing) {
-      final overlapX = (b.left < rect.right && b.left + b.width > rect.left);
-      final overlapY = (b.top < rect.bottom && b.top + b.height > rect.top);
-      if (overlapX && overlapY) return true;
-    }
-    return false;
-  }
-
   Future<void> dispose() async {
-    await _latinRecognizer.close();
-    await _devanagariRecognizer.close();
+    await _recognizer.close();
   }
 }
