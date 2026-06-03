@@ -15,6 +15,7 @@ void main() async {
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
+    statusBarBrightness: Brightness.dark,
   ));
   runApp(const PrescriptionApp());
 }
@@ -117,7 +118,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
     if (picked == null) return;
 
-    // Fixed: removed invalid IOSUiSettings params; added statusBarColor for Android
     final cropped = await ImageCropper().cropImage(
       sourcePath: picked.path,
       uiSettings: [
@@ -190,7 +190,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       backgroundColor: AppColors.bg,
       body: CustomScrollView(
         slivers: [
-          _buildAppBar(),
+          _buildAppBar(context),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
             sliver: SliverList(
@@ -210,13 +210,18 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildAppBar() {
+  Widget _buildAppBar(BuildContext context) {
+    final statusBarHeight = MediaQuery.of(context).padding.top;
+    // expandedHeight = status bar + top row (~52px) + divider + credit row (~32px) + vertical padding
+    final expandedHeight = statusBarHeight + 108.0;
+
     return SliverAppBar(
-      expandedHeight: 110,
+      expandedHeight: expandedHeight,
       floating: false,
       pinned: true,
       backgroundColor: AppColors.bg,
       elevation: 0,
+      toolbarHeight: 0,
       flexibleSpace: FlexibleSpaceBar(
         background: Container(
           decoration: const BoxDecoration(
@@ -226,15 +231,18 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               colors: [Color(0xFF0F172A), Color(0xFF0A0E1A)],
             ),
           ),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-              child: Row(
+          padding: EdgeInsets.fromLTRB(20, statusBarHeight + 12, 20, 10),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Row 1: icon  +  title  +  quality pill ──────────────
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Container(
-                    width: 40,
-                    height: 40,
+                    width: 38,
+                    height: 38,
                     decoration: BoxDecoration(
                       color: AppColors.accentGlow,
                       borderRadius: BorderRadius.circular(10),
@@ -245,47 +253,81 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         color: AppColors.accentLight, size: 20),
                   ),
                   const SizedBox(width: 12),
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Medicine Reader',
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.5,
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Medicine Reader',
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.5,
+                          ),
                         ),
-                      ),
-                      Text(
-                        'AI Prescription Reader',
-                        style: TextStyle(
-                          color: AppColors.textSecondary.withOpacity(0.7),
-                          fontSize: 12,
+                        Text(
+                          'AI-Powered Prescription Reader',
+                          style: TextStyle(
+                            color: AppColors.textSecondary.withOpacity(0.65),
+                            fontSize: 11,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  Center(
-                    child: Text(
-                      'By MD SADIQUE',
-                      style: TextStyle(
-                        color: Colors.white54,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 1.2,
-                      ),
+                      ],
                     ),
                   ),
-
-                  const SizedBox(height: 20),
-                  if (_result != null)
+                  if (_result != null) ...[
+                    const SizedBox(width: 8),
                     _StatusPill(score: _result!.imageQualityScore),
+                  ],
                 ],
               ),
-            ),
+
+              const SizedBox(height: 10),
+
+              // ── Row 2: thin divider + "Made by MD SADIQUE" credit ───
+              Container(
+                height: 1,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppColors.accent.withOpacity(0.35),
+                      AppColors.border.withOpacity(0.0),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(
+                    Icons.code_rounded,
+                    size: 12,
+                    color: AppColors.accent.withOpacity(0.7),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Made by',
+                    style: TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'MD SADIQUE',
+                    style: TextStyle(
+                      color: AppColors.accentLight.withOpacity(0.9),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -1009,8 +1051,7 @@ class _BlocksDebugViewState extends State<_BlocksDebugView> {
                 final color = b.confidence > 0.7
                     ? AppColors.success
                     : b.confidence > 0.4
-                    ? AppColors.warning
-                    : AppColors.error;
+                    ? AppColors.warning : AppColors.error;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Row(
