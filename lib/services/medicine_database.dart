@@ -699,3 +699,51 @@ class MedicineMatch {
     this.matchedAlias,
   });
 }
+import 'dart:io';
+import 'package:flutter/services.dart';
+import 'package:path/path.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:sqflite/sqflite.dart';
+
+class MedicineDatabaseService {
+  static Database? _database;
+
+  static Future<Database> get database async {
+    if (_database != null) return _database!;
+
+    final dir = await getApplicationDocumentsDirectory();
+    final dbPath = join(dir.path, "medicines.db");
+
+    if (!await File(dbPath).exists()) {
+      ByteData data =
+          await rootBundle.load("assets/db/medicines.db");
+
+      List<int> bytes = data.buffer.asUint8List();
+
+      await File(dbPath).writeAsBytes(bytes);
+    }
+
+    _database = await openDatabase(dbPath);
+
+    return _database!;
+  }
+
+  static Future<List<Map<String, dynamic>>> searchMedicine(
+      String medicineName) async {
+    final db = await database;
+
+    return await db.query(
+      "medicines",
+      where: "name LIKE ?",
+      whereArgs: ["%$medicineName%"],
+      limit: 10,
+    );
+  }
+}
+
+final results =
+    await MedicineDatabaseService.searchMedicine(
+"Augmentin",
+);
+
+print(results);

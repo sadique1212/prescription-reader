@@ -1,4 +1,3 @@
-cat > /home/claude/ai_interpretation_service.dart << 'DART'
 // lib/services/ai_interpretation_service.dart
 // FIXED: 429 rate limit handled with retry + exponential backoff
 // Tries gemini-2.0-flash → gemini-1.5-flash → gemini-1.5-flash-latest → local DB
@@ -379,5 +378,3 @@ class _LocalHint {
     required this.confidence,
   });
 }
-DART
-echo "Done"

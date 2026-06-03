@@ -10,12 +10,15 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
+  sqflite: ^2.3.3
+  path: ^1.9.0
   image_picker: ^1.1.2
   google_mlkit_text_recognition: ^0.13.0
   flutter_dotenv: ^5.1.0
   image_cropper: ^8.0.1
   http: ^1.6.0
-  path_provider: ^2.1.2   # NEW — for Claude API calls (already a transitive dep, now explicit)
+  path_provider: ^2.1.2
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
@@ -25,5 +28,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
   assets:
     - .env
+    - assets/db/medicines.db

@@ -259,7 +259,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         ),
                       ),
                       Text(
-                        'AI Prescription Interpreter By Sadique',
+                        'AI Prescription Reader',
                         style: TextStyle(
                           color: AppColors.textSecondary.withOpacity(0.7),
                           fontSize: 12,
@@ -268,6 +268,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     ],
                   ),
                   const Spacer(),
+                  Center(
+                    child: Text(
+                      'By MD SADIQUE',
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
                   if (_result != null)
                     _StatusPill(score: _result!.imageQualityScore),
                 ],
