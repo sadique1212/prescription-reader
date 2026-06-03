@@ -16,7 +16,12 @@ void main() async {
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
     statusBarBrightness: Brightness.dark,
+    // Make sure nav bar is also transparent so Flutter controls insets
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarDividerColor: Colors.transparent,
   ));
+  // Enable edge-to-edge so Flutter owns the full screen including status/nav bars
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const PrescriptionApp());
 }
 
@@ -125,6 +130,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           toolbarTitle: 'Crop Prescription',
           toolbarColor: AppColors.surface,
           toolbarWidgetColor: AppColors.textPrimary,
+          // Use a darker status bar so toolbar doesn't bleed into system icons
           statusBarColor: AppColors.bg,
           backgroundColor: AppColors.bg,
           activeControlsWidgetColor: AppColors.accent,
@@ -137,6 +143,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           initAspectRatio: CropAspectRatioPreset.original,
           lockAspectRatio: false,
           showCropGrid: true,
+          // Keep bottom controls visible and not hidden behind nav bar
           hideBottomControls: false,
         ),
         IOSUiSettings(
@@ -212,8 +219,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   Widget _buildAppBar(BuildContext context) {
     final statusBarHeight = MediaQuery.of(context).padding.top;
-    // expandedHeight = status bar + top row (~52px) + divider + credit row (~32px) + vertical padding
-    final expandedHeight = statusBarHeight + 108.0;
+    // Add extra 8px breathing room so app content starts below the status bar
+    final topPadding = statusBarHeight + 20.0;
+    // expandedHeight covers: topPadding + icon+title row (~52px) + divider+credit (~32px) + bottom padding (10)
+    final expandedHeight = topPadding + 94.0;
 
     return SliverAppBar(
       expandedHeight: expandedHeight,
@@ -221,6 +230,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       pinned: true,
       backgroundColor: AppColors.bg,
       elevation: 0,
+      // toolbarHeight 0 so the SliverAppBar itself draws nothing; FlexibleSpaceBar owns everything
       toolbarHeight: 0,
       flexibleSpace: FlexibleSpaceBar(
         background: Container(
@@ -231,7 +241,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               colors: [Color(0xFF0F172A), Color(0xFF0A0E1A)],
             ),
           ),
-          padding: EdgeInsets.fromLTRB(20, statusBarHeight + 12, 20, 10),
+          // Use topPadding so content is always below the status bar icons
+          padding: EdgeInsets.fromLTRB(20, topPadding, 20, 10),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.end,
             crossAxisAlignment: CrossAxisAlignment.start,
