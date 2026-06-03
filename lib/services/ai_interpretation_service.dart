@@ -1,6 +1,11 @@
 // lib/services/ai_interpretation_service.dart
-// FIXED: 429 rate limit handled with retry + exponential backoff
-// Tries gemini-2.0-flash → gemini-1.5-flash → gemini-1.5-flash-latest → local DB
+// Uses Gemini AI + SQLite medicine DB (2.5 lakh medicines) for validation.
+// Pipeline:
+//   1. Preprocess OCR text
+//   2. Local fuzzy pass (in-memory MedicineDatabase)
+//   3. Call Gemini (with retry + model fallback on 429)
+//   4. Validate/enrich each AI result against the SQLite DB
+//   5. Fall back to local DB if all Gemini calls fail
 
 import 'dart:convert';
 import 'dart:async';
@@ -13,7 +18,6 @@ import 'package:flutter/foundation.dart';
 class AiInterpretationService {
   static String get _apiKey => dotenv.env['GEMINI_API_KEY'] ?? '';
 
-  // Model list in priority order — will try each until one works
   static const List<String> _models = [
     'gemini-2.0-flash',
     'gemini-1.5-flash',
@@ -35,7 +39,6 @@ class AiInterpretationService {
 
     final prompt = _buildPrompt(preprocessed.cleanedText, localHints);
 
-    // Try each model with retry on 429
     for (final model in _models) {
       final result = await _tryModelWithRetry(
         model: model,
@@ -46,12 +49,11 @@ class AiInterpretationService {
       if (result != null) return result;
     }
 
-    // All models failed — use local DB
     return _buildLocalFallback(rawOcrText, localHints,
         error: 'All Gemini models rate limited. Try again in 1 minute.');
   }
 
-  // ── Try a model with up to 3 retries on 429 ───────────────────────────
+  // ── Try a model with up to 3 retries on 429 ───────────────────────────────
   Future<PrescriptionResult?> _tryModelWithRetry({
     required String model,
     required String prompt,
@@ -59,7 +61,7 @@ class AiInterpretationService {
     required List<_LocalHint> localHints,
   }) async {
     const maxRetries = 3;
-    const baseDelayMs = 5000; // 5 seconds
+    const baseDelayMs = 5000;
 
     for (int attempt = 0; attempt < maxRetries; attempt++) {
       try {
@@ -89,26 +91,24 @@ class AiInterpretationService {
           final decoded = jsonDecode(response.body);
           final text =
           decoded['candidates'][0]['content']['parts'][0]['text'] as String;
-          return _parseResponse(text, rawOcrText, localHints);
+          // Parse AI response then enrich with SQLite DB
+          return await _parseAndEnrich(text, rawOcrText, localHints);
         } else if (response.statusCode == 429) {
-          // Rate limited — wait and retry
           if (attempt < maxRetries - 1) {
-            final waitMs = baseDelayMs * (attempt + 1); // 5s, 10s, 15s
-            debugPrint('Rate limited on $model, waiting ${waitMs}ms before retry...');
+            final waitMs = baseDelayMs * (attempt + 1);
+            debugPrint('Rate limited on $model, waiting ${waitMs}ms...');
             await Future.delayed(Duration(milliseconds: waitMs));
             continue;
           } else {
-            // Exhausted retries for this model
             debugPrint('Rate limit exhausted for $model, trying next model');
-            return null; // Signal to try next model
+            return null;
           }
         } else if (response.statusCode == 404) {
-          // Model not available on this key
           debugPrint('Model $model not found (404), trying next');
           return null;
         } else {
           debugPrint('Gemini [$model] error ${response.statusCode}: ${response.body}');
-          return null; // Try next model
+          return null;
         }
       } catch (e) {
         debugPrint('Gemini [$model] network error: $e');
@@ -122,7 +122,7 @@ class AiInterpretationService {
     return null;
   }
 
-  // ── Prompt builder ─────────────────────────────────────────────────────
+  // ── Prompt ────────────────────────────────────────────────────────────────
   String _buildPrompt(String cleanedText, List<_LocalHint> localHints) {
     final hintsText = localHints.isEmpty
         ? 'No strong local matches.'
@@ -187,7 +187,7 @@ OUTPUT ONLY THIS JSON (no markdown, no extra text):
 }''';
   }
 
-  // ── Pre-processing ────────────────────────────────────────────────────
+  // ── Pre-processing ────────────────────────────────────────────────────────
   _PreprocessedText _preprocess(String raw) {
     var text = raw
         .replaceAll('\r\n', '\n')
@@ -222,7 +222,7 @@ OUTPUT ONLY THIS JSON (no markdown, no extra text):
         cleanedText: lines.join('\n'), tokenLines: tokenLines);
   }
 
-  // ── Local fuzzy DB pass ───────────────────────────────────────────────
+  // ── Local fuzzy pass ──────────────────────────────────────────────────────
   List<_LocalHint> _localFuzzyPass(List<TokenLine> tokenLines) {
     final hints = <_LocalHint>[];
     for (final line in tokenLines) {
@@ -252,35 +252,61 @@ OUTPUT ONLY THIS JSON (no markdown, no extra text):
       ..sort((a, b) => b.confidence.compareTo(a.confidence));
   }
 
-  // ── Response parsing ──────────────────────────────────────────────────
-  PrescriptionResult _parseResponse(
+  // ── Parse + enrich with SQLite DB ─────────────────────────────────────────
+  Future<PrescriptionResult> _parseAndEnrich(
       String jsonText,
       String rawOcr,
       List<_LocalHint> localHints,
-      ) {
+      ) async {
     final clean = _extractJson(jsonText);
     try {
       final data = jsonDecode(clean) as Map<String, dynamic>;
       final medicinesJson = data['medicines'] as List<dynamic>? ?? [];
 
-      final medicines = medicinesJson.map((m) {
+      final medicines = <InterpretedMedicine>[];
+      for (final m in medicinesJson) {
         final map = m as Map<String, dynamic>;
+        final rawName = map['name'] as String? ?? 'Unknown';
+        final cleanedName = _cleanName(rawName);
+
+        // ── SQLite enrichment ─────────────────────────────────────────
+        final dbMatches =
+        await MedicineDatabaseService.smartSearch(cleanedName, limit: 3);
+        final corrections = List<String>.from(map['corrections_made'] ?? []);
+        double confidence =
+            (map['confidence'] as num?)?.toDouble() ?? 0.5;
+
+        String verifiedName = cleanedName;
+        if (dbMatches.isNotEmpty) {
+          final topMatch = dbMatches.first;
+          final dbName = topMatch['name'] as String? ?? cleanedName;
+          // If DB found a close match with different capitalisation/spelling,
+          // prefer the canonical DB spelling and boost confidence slightly.
+          if (dbName.toLowerCase() != cleanedName.toLowerCase()) {
+            corrections.add('Name verified via medicine DB: $dbName');
+            verifiedName = dbName;
+          }
+          // Confidence boost: we found it in the 2.5 lakh DB
+          confidence = (confidence + 0.10).clamp(0.0, 1.0);
+        }
+
         final rawFreq = map['frequency'] as String? ?? '';
         final freq = rawFreq.contains('(')
             ? rawFreq
             : AbbreviationDecoder.annotateDosage(rawFreq);
-        return InterpretedMedicine(
-          name: _cleanName(map['name'] as String? ?? 'Unknown'),
+
+        medicines.add(InterpretedMedicine(
+          name: verifiedName,
           rawOcr: map['raw_ocr'] as String? ?? '',
           dose: map['dose'] as String? ?? '',
           frequency: freq,
           duration: map['duration'] as String? ?? '',
           route: map['route'] as String?,
           specialInstructions: map['special_instructions'] as String?,
-          confidence: (map['confidence'] as num?)?.toDouble() ?? 0.5,
-          correctionsMade: List<String>.from(map['corrections_made'] ?? []),
-        );
-      }).toList();
+          confidence: confidence,
+          correctionsMade: corrections,
+        ));
+      }
 
       return PrescriptionResult(
         medicines: medicines,
@@ -310,14 +336,15 @@ OUTPUT ONLY THIS JSON (no markdown, no extra text):
   String _cleanName(String name) {
     return name
         .replaceAll(
-        RegExp(
-            r'^(Tab\.?|Cap\.?|Tablet|Capsule|Syrup|Inj\.?|Injection)\s+',
-            caseSensitive: false),
-        '')
+      RegExp(
+          r'^(Tab\.?|Cap\.?|Tablet|Capsule|Syrup|Inj\.?|Injection)\s+',
+          caseSensitive: false),
+      '',
+    )
         .trim();
   }
 
-  // ── Local fallback ────────────────────────────────────────────────────
+  // ── Local fallback (uses in-memory DB only) ───────────────────────────────
   PrescriptionResult _buildLocalFallback(
       String rawOcr,
       List<_LocalHint> localHints, {
@@ -350,7 +377,7 @@ OUTPUT ONLY THIS JSON (no markdown, no extra text):
   }
 }
 
-// ── Internal types ────────────────────────────────────────────────────────
+// ── Internal types ────────────────────────────────────────────────────────────
 
 class _PreprocessedText {
   final String cleanedText;
